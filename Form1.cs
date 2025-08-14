@@ -7,14 +7,14 @@ using System.Runtime.InteropServices;
 
 namespace HandleLeveler
 {
-    public partial class Velocity : Form
+    public partial class HandleLeveler : Form
     {
         private IModbusMaster? master;
         private SerialPort? port;
         private byte slaveId = 1;
         private bool isConnected = false;
 
-        public Velocity()
+        public HandleLeveler()
         {
             InitializeComponent();
             InitializeCustomComponents();
