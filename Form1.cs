@@ -108,12 +108,11 @@ namespace HandleLeveler
 
             try
             {
-                ushort[] registers = master.ReadHoldingRegisters(slaveId, 1, 4);
+                ushort[] registers = master.ReadHoldingRegisters(slaveId, 1, 5);
 
-                if (registers.Length == 4)
+                if (registers.Length == 5)
                 {
-                    Array.Copy(registers, 0, GData.mbmWordData, 1, 4);
-                    UpdateUIFromData();
+                    UpdateUIFromData(registers);
                 }
             }
             catch (Exception ex)
@@ -123,23 +122,20 @@ namespace HandleLeveler
             }
         }
 
-        private void UpdateUIFromData()
+        private void UpdateUIFromData(ushort[] registers)
         {
             this.Invoke(new Action(() =>
             {
-                int value;
-                if (GData.mbmWordData[1] == 0) lb_a1.Text = "보드"; else lb_a1.Text = "PC";
+                lb_a1.Text = registers[0] == 0 ? "보드" : "PC";
 
-                value = (int)((GData.mbmWordData[2] * 0x10000) + GData.mbmWordData[3]);
-                lb_a2.Text = value.ToString();
+                int sensorAdValue = (registers[1] << 16) | registers[2];
+                lb_a2.Text = sensorAdValue.ToString();
 
-                value = (int)GData.mbmWordData[4];
-                if (value >= 0x8000) value = (value - 0x8000) * -1;
-                lb_a3.Text = value.ToString();
+                short boardAngle = (short)registers[3];
+                lb_a3.Text = boardAngle.ToString();
 
-                value = (int)GData.mbmWordData[5];
-                if (value >= 0x8000) value = (value - 0x8000) * -1;
-                lb_a4.Text = value.ToString();
+                short pcAngle = (short)registers[4];
+                lb_a4.Text = pcAngle.ToString();
             }));
         }
 
