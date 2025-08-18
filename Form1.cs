@@ -130,15 +130,15 @@ namespace HandleLeveler
                 int value;
                 if (GData.mbmWordData[1] == 0) lb_a1.Text = "보드"; else lb_a1.Text = "PC";
 
-                value = (int)((GData.mbmWordData[2] << 16) | GData.mbmWordData[3]);
+                value = (int)((GData.mbmWordData[2] * 0x10000) + GData.mbmWordData[3]);
                 lb_a2.Text = value.ToString();
 
                 value = (int)GData.mbmWordData[4];
-                if (value >= 0x8000) value -= 0x10000;
+                if (value >= 0x8000) value = (value - 0x8000) * -1;
                 lb_a3.Text = value.ToString();
 
                 value = (int)GData.mbmWordData[5];
-                if (value >= 0x8000) value -= 0x10000;
+                if (value >= 0x8000) value = (value - 0x8000) * -1;
                 lb_a4.Text = value.ToString();
             }));
         }
