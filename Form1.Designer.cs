@@ -365,6 +365,7 @@ namespace HandleLeveler
             btnPlusTen.TabIndex = 2;
             btnPlusTen.Text = "+10";
             btnPlusTen.UseVisualStyleBackColor = true;
+            btnPlusTen.Click += btnPlusTen_Click;
             // 
             // btnMinusTen
             // 
@@ -375,6 +376,7 @@ namespace HandleLeveler
             btnMinusTen.TabIndex = 1;
             btnMinusTen.Text = "-10";
             btnMinusTen.UseVisualStyleBackColor = true;
+            btnMinusTen.Click += btnMinusTen_Click;
             // 
             // btnZero
             // 
@@ -385,6 +387,7 @@ namespace HandleLeveler
             btnZero.TabIndex = 0;
             btnZero.Text = "영점";
             btnZero.UseVisualStyleBackColor = true;
+            btnZero.Click += btnZero_Click;
             // 
             // btnRemove
             // 
@@ -399,7 +402,7 @@ namespace HandleLeveler
             btnRemove.UseVisualStyleBackColor = true;
             btnRemove.Click += btnRemove_Click;
             // 
-            // Velocity
+            // HandleLeveler
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
@@ -408,9 +411,11 @@ namespace HandleLeveler
             Controls.Add(tabControl1);
             Controls.Add(tbMsg);
             Margin = new Padding(3, 4, 3, 4);
-            Name = "Velocity";
+            Name = "HandleLeveler";
             Text = "HandleLeveler";
+            FormClosing += HandleLeveler_FormClosing;
             FormClosed += Velocity_FormClosed;
+            Load += HandleLeveler_Load;
             tabControl1.ResumeLayout(false);
             tabPage1.ResumeLayout(false);
             tabPage1.PerformLayout();

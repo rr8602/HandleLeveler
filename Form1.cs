@@ -1,9 +1,12 @@
-using System.IO.Ports;
 using NModbus;
 using NModbus.Device;
 using NModbus.IO;
 using NModbus.Serial;
+
+using System.IO.Ports;
+using System.Net;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace HandleLeveler
 {
@@ -14,10 +17,48 @@ namespace HandleLeveler
         private byte slaveId = 1;
         private bool isConnected = false;
 
+        private int calibrationValue = 0;
+
+        // INI 파일 데이터
+        private static string iniFilePath = Path.Combine(Application.StartupPath, "HandleLeveler.ini");
+        private IniFile? iniFile = new IniFile(iniFilePath);
+
         public HandleLeveler()
         {
             InitializeComponent();
             InitializeCustomComponents();
+        }
+
+        public void SaveIniFile(string fndDisplay, string sensorAD, string boardAngle, string pcAngle)
+        {
+            try
+            {
+                iniFile?.WriteValue("Movement", "FND", fndDisplay);
+                iniFile?.WriteValue("Movement", "SensorAD", sensorAD);
+                iniFile?.WriteValue("Movement", "BoardAngle", boardAngle);
+                iniFile?.WriteValue("Movement", "PcAngle", pcAngle);
+
+                msgNbSend($"INI 파일이 성공적으로 저장 되었습니다: {iniFilePath}");
+            }
+            catch (Exception ex)
+            {
+                msgNbSend($"INI 파일 생성 중 오류: {ex.Message}");
+            }
+        }
+
+        public void LoadFromIni()
+        {
+            try
+            {
+                lb_a1.Text = iniFile?.ReadString("Movement", "FND");
+                lb_a2.Text = (iniFile?.ReadInteger("Movement", "SensorAD")).ToString();
+                lb_a3.Text = (iniFile?.ReadInteger("Movement", "BoardAngle")).ToString();
+                lb_a4.Text = (iniFile?.ReadInteger("Movement", "PcAngle")).ToString();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("INI 파일을 읽는 중 오류가 발생했습니다: " + ex.Message, "오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void InitializeCustomComponents()
@@ -86,7 +127,7 @@ namespace HandleLeveler
             }
             catch (Exception ex)
             {
-                 msgNbSend($"종료 오류: {ex.Message}");
+                msgNbSend($"종료 오류: {ex.Message}");
             }
             finally
             {
@@ -175,12 +216,23 @@ namespace HandleLeveler
             if (ushort.TryParse(txtSendValue.Text, out ushort value))
             {
                 if (value > 1000) value = 1000;
+
                 WriteRegister(5, value);
             }
             else
             {
                 msgNbSend("유효하지 않은 숫자입니다.");
             }
+        }
+
+        private void HandleLeveler_Load(object sender, EventArgs e)
+        {
+            LoadFromIni();
+        }
+
+        private void HandleLeveler_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            SaveIniFile(lb_a1.Text, lb_a2.Text, lb_a3.Text, lb_a4.Text);
         }
 
         private void Velocity_FormClosed(object sender, FormClosedEventArgs e)
@@ -214,6 +266,21 @@ namespace HandleLeveler
         private void btnRemove_Click(object sender, EventArgs e)
         {
             tbMsg.Text = "";
+        }
+
+        private void btnPlusTen_Click(object sender, EventArgs e)
+        {
+            calibrationValue += 10;
+        }
+
+        private void btnMinusTen_Click(object sender, EventArgs e)
+        {
+            calibrationValue -= 10;
+        }
+
+        private void btnZero_Click(object sender, EventArgs e)
+        {
+            calibrationValue = 0;
         }
     }
 }
