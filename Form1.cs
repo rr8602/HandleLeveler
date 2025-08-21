@@ -16,8 +16,13 @@ namespace HandleLeveler
         private SerialPort? port;
         private byte slaveId = 1;
         private bool isConnected = false;
-
+        private readonly object _modbusLock = new object();
+        private readonly object _queueLock = new object();
         private int calibrationValue = 0;
+
+        private CancellationTokenSource? _cancellationTokenSource;
+        private Task? _communicationTask;
+        private Queue<Tuple<ushort, ushort>> _writeQueue = new Queue<Tuple<ushort, ushort>>();
 
         // INI 파일 데이터
         private static string iniFilePath = Path.Combine(Application.StartupPath, "HandleLeveler.ini");
@@ -50,7 +55,18 @@ namespace HandleLeveler
         {
             try
             {
-                lb_a1.Text = iniFile?.ReadString("Movement", "FND");
+                string? fndDisplay = iniFile?.ReadString("Movement", "FND");
+                lb_a1.Text = fndDisplay;
+
+                if (fndDisplay == "PC")
+                {
+                    rdoPc.Checked = true;
+                }
+                else
+                {
+                    rdoBoard.Checked = true;
+                }
+
                 lb_a2.Text = (iniFile?.ReadInteger("Movement", "SensorAD")).ToString();
                 lb_a3.Text = (iniFile?.ReadInteger("Movement", "BoardAngle")).ToString();
                 lb_a4.Text = (iniFile?.ReadInteger("Movement", "PcAngle")).ToString();
@@ -63,8 +79,6 @@ namespace HandleLeveler
 
         private void InitializeCustomComponents()
         {
-            readTimer.Enabled = false;
-
             cbbPort.Items.Clear();
             string[] portsArray = SerialPort.GetPortNames();
             cbbPort.Items.AddRange(portsArray);
@@ -93,9 +107,12 @@ namespace HandleLeveler
                     master = factory.CreateRtuMaster(adapter);
 
                     isConnected = true;
+
+                    _cancellationTokenSource = new CancellationTokenSource();
+                    _communicationTask = Task.Run(() => CommunicationLoop(_cancellationTokenSource.Token), _cancellationTokenSource.Token);
+
                     btnStartAndStop.Text = "정지";
                     btnLed.BackColor = Color.Green;
-                    readTimer.Start();
                     msgNbSend("통신 연결됨");
                 }
                 catch (Exception ex)
@@ -112,15 +129,44 @@ namespace HandleLeveler
             }
             else
             {
-                Disconnect();
+                Disconnect(false);
             }
         }
 
-        private void Disconnect()
+        private void Disconnect(bool resetPcAngle = false)
         {
+            if (!isConnected) return;
+
+            isConnected = false;
+
             try
             {
-                readTimer.Stop();
+                _cancellationTokenSource?.Cancel();
+            }
+            catch (Exception ex)
+            {
+                msgNbSend($"Cancellation-Token 해제 오류: {ex.Message}");
+            }
+
+            _communicationTask?.Wait(500);
+
+            if (resetPcAngle && master != null)
+            {
+                try
+                {
+                    master.WriteSingleRegister(slaveId, 5, 0);
+                    msgNbSend("PC 각도를 0으로 초기화했습니다.");
+                    Thread.Sleep(50); 
+                }
+                catch (Exception ex)
+                {
+                    msgNbSend($"PC 각도 초기화 오류: {ex.Message}");
+                }
+            }
+
+            try
+            {
+                _cancellationTokenSource?.Dispose();
                 master?.Dispose();
                 port?.Close();
                 port?.Dispose();
@@ -133,33 +179,109 @@ namespace HandleLeveler
             {
                 master = null;
                 port = null;
-                isConnected = false;
-                btnStartAndStop.Text = "연결";
-                btnLed.BackColor = Color.Black;
-                msgNbSend("통신 정지됨");
+                _communicationTask = null;
+                _cancellationTokenSource = null;
+
+                if (this.InvokeRequired)
+                {
+                    this.Invoke(new Action(() =>
+                    {
+                        btnStartAndStop.Text = "연결";
+                        btnLed.BackColor = Color.Black;
+                        msgNbSend("통신 정지됨");
+                    }));
+                }
+                else
+                {
+                    btnStartAndStop.Text = "연결";
+                    btnLed.BackColor = Color.Black;
+                    msgNbSend("통신 정지됨");
+                }
             }
         }
 
-        private void readTimer_Tick(object sender, EventArgs e)
+        private void CommunicationLoop(CancellationToken token)
         {
-            if (!isConnected || master == null)
+            while (!token.IsCancellationRequested)
             {
-                return;
-            }
-
-            try
-            {
-                ushort[] registers = master.ReadHoldingRegisters(slaveId, 1, 5);
-
-                if (registers.Length == 5)
+                if (!Monitor.TryEnter(_modbusLock, 50))
                 {
-                    UpdateUIFromData(registers);
+                    try { Task.Delay(50, token).Wait(); } catch (OperationCanceledException) { break; }
+
+                    continue;
                 }
-            }
-            catch (Exception ex)
-            {
-                msgNbSend($"데이터 읽기 오류: {ex.Message}");
-                Disconnect();
+
+                try
+                {
+                    Tuple<ushort, ushort>? writeRequest = null;
+
+                    lock (_queueLock)
+                    {
+                        if (_writeQueue.Count > 0)
+                        {
+                            writeRequest = _writeQueue.Dequeue();
+                        }
+                    }
+
+                    if (writeRequest != null)
+                    {
+                        try
+                        {
+                            master.WriteSingleRegister(slaveId, writeRequest.Item1, writeRequest.Item2);
+                            this.Invoke(new Action(() => msgNbSend($"Register {writeRequest.Item1}에 {writeRequest.Item2} 쓰기 성공")));
+                        }
+                        catch (Exception ex)
+                        {
+                            if (!token.IsCancellationRequested)
+                            {
+                                this.Invoke(new Action(() =>
+                                {
+                                    msgNbSend($"쓰기 오류: {ex.Message}. 연결을 종료합니다.");
+                                    Disconnect(false);
+                                }));
+                            }
+
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        try
+                        {
+                            ushort[] registers = master.ReadHoldingRegisters(slaveId, 1, 5);
+
+                            if (registers.Length == 5)
+                            {
+                                UpdateUIFromData(registers);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            if (!token.IsCancellationRequested)
+                            {
+                                this.Invoke(new Action(() =>
+                                {
+                                    msgNbSend($"읽기 오류: {ex.Message}. 연결을 종료합니다.");
+                                    Disconnect(false);
+                                }));
+                            }
+                            break;
+                        }
+                    }
+                }
+                finally
+                {
+                    Monitor.Exit(_modbusLock);
+                }
+
+                try
+                {
+                    Task.Delay(10, token).Wait();
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         }
 
@@ -172,27 +294,38 @@ namespace HandleLeveler
                 int sensorAdValue = (registers[1] << 16) | registers[2];
                 lb_a2.Text = sensorAdValue.ToString();
 
-                short boardAngle = (short)registers[3];
-                lb_a3.Text = boardAngle.ToString();
+                int boardAngleInt = (int)registers[3];
 
-                short pcAngle = (short)registers[4];
-                lb_a4.Text = pcAngle.ToString();
+                if (boardAngleInt >= 0x8000)
+                {
+                    boardAngleInt = (boardAngleInt - 0x8000) * -1;
+                }
+
+                double boardAngle = boardAngleInt / 100.0;
+                lb_a3.Text = boardAngle.ToString("F2");
+
+                int pcAngleInt = (int)registers[4];
+
+                if (pcAngleInt >= 0x8000)
+                {
+                    pcAngleInt = (pcAngleInt - 0x8000) * -1;
+                }
+
+                double pcAngle = pcAngleInt / 100.0;
+                lb_a4.Text = pcAngle.ToString("F2");
             }));
         }
 
         private void WriteRegister(ushort address, ushort value)
         {
             if (!isConnected || master == null) return;
-            try
+
+            lock (_queueLock)
             {
-                master.WriteSingleRegister(slaveId, address, value);
-                msgNbSend($"Register {address}에 {value} 쓰기 성공");
+                _writeQueue.Enqueue(Tuple.Create(address, value));
             }
-            catch (Exception ex)
-            {
-                msgNbSend($"쓰기 오류: {ex.Message}");
-                Disconnect();
-            }
+
+            msgNbSend($"Register {address}에 {value} 쓰기 요청 큐에 추가됨");
         }
 
         private void rdoBoard_CheckedChanged(object sender, EventArgs e)
@@ -213,11 +346,24 @@ namespace HandleLeveler
 
         private void btnSend_Click(object sender, EventArgs e)
         {
-            if (ushort.TryParse(txtSendValue.Text, out ushort value))
+            if (double.TryParse(txtSendValue.Text, out double angleValue))
             {
-                if (value > 1000) value = 1000;
+                int value = (int)(angleValue * 100);
 
-                WriteRegister(5, value);
+                value = Math.Max(-1000, Math.Min(1000, value));
+
+                ushort valueToWrite;
+
+                if (value >= 0)
+                {
+                    valueToWrite = (ushort)value;
+                }
+                else
+                {
+                    valueToWrite = (ushort)(Math.Abs(value) | 0x8000);
+                }
+
+                WriteRegister(5, valueToWrite);
             }
             else
             {
@@ -233,13 +379,10 @@ namespace HandleLeveler
         private void HandleLeveler_FormClosing(object sender, FormClosingEventArgs e)
         {
             SaveIniFile(lb_a1.Text, lb_a2.Text, lb_a3.Text, lb_a4.Text);
-        }
-
-        private void Velocity_FormClosed(object sender, FormClosedEventArgs e)
-        {
+            
             if (isConnected)
             {
-                Disconnect();
+                Disconnect(true);
             }
         }
 
@@ -270,17 +413,22 @@ namespace HandleLeveler
 
         private void btnPlusTen_Click(object sender, EventArgs e)
         {
-            calibrationValue += 10;
+            calibrationValue = 1000;
+            ushort valueToWrite = (ushort)calibrationValue;
+            WriteRegister(5, valueToWrite);
         }
 
         private void btnMinusTen_Click(object sender, EventArgs e)
         {
-            calibrationValue -= 10;
+            calibrationValue = -1000;
+            ushort valueToWrite = (ushort)(Math.Abs(calibrationValue) | 0x8000);
+            WriteRegister(5, valueToWrite);
         }
 
         private void btnZero_Click(object sender, EventArgs e)
         {
             calibrationValue = 0;
+            WriteRegister(5, (ushort)calibrationValue);
         }
     }
 }

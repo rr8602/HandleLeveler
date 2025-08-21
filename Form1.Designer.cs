@@ -28,8 +28,6 @@ namespace HandleLeveler
         /// </summary>
         private void InitializeComponent()
         {
-            components = new System.ComponentModel.Container();
-            readTimer = new System.Windows.Forms.Timer(components);
             cbbSpeed = new ComboBox();
             btnLed = new Button();
             btnStartAndStop = new Button();
@@ -65,11 +63,6 @@ namespace HandleLeveler
             groupBox1.SuspendLayout();
             tabPage3.SuspendLayout();
             SuspendLayout();
-            // 
-            // readTimer
-            // 
-            readTimer.Enabled = true;
-            readTimer.Tick += readTimer_Tick;
             // 
             // cbbSpeed
             // 
@@ -414,7 +407,6 @@ namespace HandleLeveler
             Name = "HandleLeveler";
             Text = "HandleLeveler";
             FormClosing += HandleLeveler_FormClosing;
-            FormClosed += Velocity_FormClosed;
             Load += HandleLeveler_Load;
             tabControl1.ResumeLayout(false);
             tabPage1.ResumeLayout(false);
@@ -429,7 +421,6 @@ namespace HandleLeveler
         }
 
         #endregion
-        private System.Windows.Forms.Timer readTimer;
         private System.Windows.Forms.SaveFileDialog saveFileDialog1;
         private System.Windows.Forms.Button btnStartAndStop;
         private System.Windows.Forms.ComboBox cbbPort;
