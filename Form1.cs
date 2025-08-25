@@ -18,7 +18,10 @@ namespace HandleLeveler
         private bool isConnected = false;
         private readonly object _modbusLock = new object();
         private readonly object _queueLock = new object();
+        private double incline = 0.0;
         private int calibrationValue = 0;
+        private double? overrideAngle = null;
+        private CancellationTokenSource? resetOverrideTimerCts = null;
 
         private CancellationTokenSource? _cancellationTokenSource;
         private Task? _communicationTask;
@@ -34,13 +37,14 @@ namespace HandleLeveler
             InitializeCustomComponents();
         }
 
-        public void SaveIniFile(string fndDisplay, string sensorAD, string boardAngle, string pcAngle)
+        public void SaveIniFile(string fndDisplay, string sensorAD, string boardAngle, double incline, string pcAngle)
         {
             try
             {
                 iniFile?.WriteValue("Movement", "FND", fndDisplay);
                 iniFile?.WriteValue("Movement", "SensorAD", sensorAD);
                 iniFile?.WriteValue("Movement", "BoardAngle", boardAngle);
+                iniFile?.WriteValue("Movement", "Incline", incline.ToString("F2"));
                 iniFile?.WriteValue("Movement", "PcAngle", pcAngle);
 
                 msgNbSend($"INI 파일이 성공적으로 저장 되었습니다: {iniFilePath}");
@@ -70,6 +74,7 @@ namespace HandleLeveler
                 lb_a2.Text = (iniFile?.ReadInteger("Movement", "SensorAD")).ToString();
                 lb_a3.Text = (iniFile?.ReadInteger("Movement", "BoardAngle")).ToString();
                 lb_a4.Text = (iniFile?.ReadInteger("Movement", "PcAngle")).ToString();
+                incline = iniFile?.ReadDouble("Movement", "Incline") ?? 0.0;
             }
             catch (Exception ex)
             {
@@ -98,8 +103,8 @@ namespace HandleLeveler
                 try
                 {
                     port = new SerialPort(cbbPort.Text, Convert.ToInt32(cbbSpeed.Text));
-                    port.ReadTimeout = 300;
-                    port.WriteTimeout = 300;
+                    port.ReadTimeout = 50;
+                    port.WriteTimeout = 50;
                     port.Open();
 
                     var factory = new ModbusFactory();
@@ -228,7 +233,6 @@ namespace HandleLeveler
                         try
                         {
                             master.WriteSingleRegister(slaveId, writeRequest.Item1, writeRequest.Item2);
-                            this.Invoke(new Action(() => msgNbSend($"Register {writeRequest.Item1}에 {writeRequest.Item2} 쓰기 성공")));
                         }
                         catch (Exception ex)
                         {
@@ -256,7 +260,7 @@ namespace HandleLeveler
                             }
                         }
                         catch (Exception ex)
-                        {
+                        { 
                             if (!token.IsCancellationRequested)
                             {
                                 this.Invoke(new Action(() =>
@@ -273,15 +277,6 @@ namespace HandleLeveler
                 {
                     Monitor.Exit(_modbusLock);
                 }
-
-                try
-                {
-                    Task.Delay(10, token).Wait();
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
             }
         }
 
@@ -291,7 +286,7 @@ namespace HandleLeveler
             {
                 lb_a1.Text = registers[0] == 0 ? "보드" : "PC";
 
-                int sensorAdValue = (registers[1] << 16) | registers[2];
+                int sensorAdValue = (registers[1] * 0x010000) + registers[2];
                 lb_a2.Text = sensorAdValue.ToString();
 
                 int boardAngleInt = (int)registers[3];
@@ -304,15 +299,42 @@ namespace HandleLeveler
                 double boardAngle = boardAngleInt / 100.0;
                 lb_a3.Text = boardAngle.ToString("F2");
 
-                int pcAngleInt = (int)registers[4];
+                double pcAngle;
 
-                if (pcAngleInt >= 0x8000)
+                if (registers[0] == 1)
                 {
-                    pcAngleInt = (pcAngleInt - 0x8000) * -1;
-                }
+                    if (overrideAngle.HasValue)
+                    {
+                        pcAngle = overrideAngle.Value;
+                    }
+                    else
+                    {
+                        const double adPoint1 = 130850;
+                        const double anglePoint1 = 0.0;
+                        const double adPoint2 = 149300;
+                        const double anglePoint2 = 10.0;
+                        const double sensitivity = (anglePoint2 - anglePoint1) / (adPoint2 - adPoint1);
+                        const double offset = anglePoint1 - sensitivity * adPoint1;
 
-                double pcAngle = pcAngleInt / 100.0;
-                lb_a4.Text = pcAngle.ToString("F2");
+                        double calculatedAngle = (sensorAdValue * sensitivity) + offset;
+                        pcAngle = Math.Max(-15.00, Math.Min(15.00, calculatedAngle));
+                    }
+
+                    int writeValue = (int)(pcAngle * 100);
+                    ushort writeAngle;
+
+                    if (writeValue >= 0)
+                    {
+                        writeAngle = (ushort)writeValue;
+                    }
+                    else
+                    {
+                        writeAngle = (ushort)(Math.Abs(writeValue) | 0x8000);
+                    }
+
+                    lb_a4.Text = pcAngle.ToString("F2");
+                    WriteRegister(5, writeAngle);
+                }
             }));
         }
 
@@ -324,8 +346,6 @@ namespace HandleLeveler
             {
                 _writeQueue.Enqueue(Tuple.Create(address, value));
             }
-
-            msgNbSend($"Register {address}에 {value} 쓰기 요청 큐에 추가됨");
         }
 
         private void rdoBoard_CheckedChanged(object sender, EventArgs e)
@@ -333,6 +353,7 @@ namespace HandleLeveler
             if (rdoBoard.Checked)
             {
                 WriteRegister(1, 0);
+                iniFile?.WriteValue("Movement", "FND", rdoBoard.Text);
             }
         }
 
@@ -341,6 +362,7 @@ namespace HandleLeveler
             if (rdoPc.Checked)
             {
                 WriteRegister(1, 1);
+                iniFile?.WriteValue("Movement", "FND", rdoPc.Text);
             }
         }
 
@@ -378,7 +400,7 @@ namespace HandleLeveler
 
         private void HandleLeveler_FormClosing(object sender, FormClosingEventArgs e)
         {
-            SaveIniFile(lb_a1.Text, lb_a2.Text, lb_a3.Text, lb_a4.Text);
+            SaveIniFile(lb_a1.Text, lb_a2.Text, lb_a3.Text, incline, lb_a4.Text);
             
             if (isConnected)
             {
@@ -411,24 +433,41 @@ namespace HandleLeveler
             tbMsg.Text = "";
         }
 
+        private void SetOverrideAngle(double? angle)
+        {
+            resetOverrideTimerCts?.Cancel();
+            resetOverrideTimerCts?.Dispose();
+
+            overrideAngle = angle;
+
+            if (angle.HasValue)
+            {
+                resetOverrideTimerCts = new CancellationTokenSource();
+                CancellationToken token = resetOverrideTimerCts.Token;
+
+                Task.Delay(5000, token).ContinueWith(t =>
+                {
+                    if (!t.IsCanceled)
+                    {
+                        overrideAngle = null;
+                    }
+                }, TaskScheduler.FromCurrentSynchronizationContext());
+            }
+        }
+
         private void btnPlusTen_Click(object sender, EventArgs e)
         {
-            calibrationValue = 1000;
-            ushort valueToWrite = (ushort)calibrationValue;
-            WriteRegister(5, valueToWrite);
+            SetOverrideAngle(10.0);
         }
 
         private void btnMinusTen_Click(object sender, EventArgs e)
         {
-            calibrationValue = -1000;
-            ushort valueToWrite = (ushort)(Math.Abs(calibrationValue) | 0x8000);
-            WriteRegister(5, valueToWrite);
+            SetOverrideAngle(-10.0);
         }
 
         private void btnZero_Click(object sender, EventArgs e)
         {
-            calibrationValue = 0;
-            WriteRegister(5, (ushort)calibrationValue);
+            SetOverrideAngle(0.0);
         }
     }
 }
