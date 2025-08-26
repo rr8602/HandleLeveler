@@ -309,14 +309,30 @@ namespace HandleLeveler
                     }
                     else
                     {
-                        const double adPoint1 = 130850;
-                        const double anglePoint1 = 0.0;
-                        const double adPoint2 = 149300;
-                        const double anglePoint2 = 10.0;
-                        const double sensitivity = (anglePoint2 - anglePoint1) / (adPoint2 - adPoint1);
-                        const double offset = anglePoint1 - sensitivity * adPoint1;
+                        const double adZeroPoint = 130850;
+                        const double angleZeroPoint = 0.0;
+                        const double adPlusPoint = 149300;
+                        const double anglePlusPoint = 10.0;
+                        const double adMinusPoint = 112400;
+                        const double angleMinusPoint = -10.0;
 
-                        double calculatedAngle = (sensorAdValue * sensitivity) + offset;
+                        const double plusSensitivity = (anglePlusPoint - angleZeroPoint) / (adPlusPoint - adZeroPoint);
+                        const double plusOffset = angleZeroPoint - plusSensitivity * adZeroPoint;
+
+                        const double minusSensitivity = (angleMinusPoint - angleZeroPoint) / (adMinusPoint - adZeroPoint);
+                        const double minusOffset = angleZeroPoint - minusSensitivity * adZeroPoint;
+
+                        double calculatedAngle;
+
+                        if (sensorAdValue >= adZeroPoint)
+                        {
+                            calculatedAngle = (sensorAdValue * plusSensitivity) + plusOffset;
+                        }
+                        else
+                        {
+                            calculatedAngle = (sensorAdValue * minusSensitivity) + minusOffset;
+                        }
+
                         pcAngle = Math.Max(-15.00, Math.Min(15.00, calculatedAngle));
                     }
 
